@@ -1,6 +1,8 @@
 // NEON HARBOR — shared tuning, names and data tables.
-// The city is Port Meridian: a sun-soaked harbour town of five districts.
-// Everything here is original fiction; no real place, person or brand.
+// The city is Port Meridian: a sun-soaked harbour town of seven
+// districts, from the Downtown towers to the Dockside warehouses and
+// the Sandside beach. Everything here is original fiction; no real
+// place, person or brand.
 
 export const WORLD_W = 3400;
 export const WORLD_H = 3400;
@@ -8,15 +10,19 @@ export const BLOCK = 340; // distance between street centrelines
 export const ROAD_W = 96;
 export const STEP = 1 / 60;
 
-export const SAVE_KEY = 'neon-harbor-save-v1';
+export const SAVE_KEY = 'neon-harbor-save-v2';
 export const BEST_KEY = 'neon-harbor-best-v1';
 
+// Seven districts. Dockside (the container yards and the East Pier)
+// is the new east-side district: Harbor Lights ends at x 2300 now,
+// and the docks run from there to the water.
 export const DISTRICTS = [
   { name: 'Downtown', x: 1100, y: 300, w: 1200, h: 900, tint: '#2b3a5e', tall: true },
   { name: 'Old Town', x: 300, y: 300, w: 800, h: 900, tint: '#7a5a3a', tall: false },
   { name: 'Marina', x: 2300, y: 300, w: 800, h: 900, tint: '#2e6f7a', tall: false },
   { name: 'Foundry Row', x: 300, y: 1400, w: 1000, h: 1000, tint: '#5e4a3a', tall: false },
-  { name: 'Harbor Lights', x: 1500, y: 1400, w: 1600, h: 1000, tint: '#7a3a6e', tall: true },
+  { name: 'Harbor Lights', x: 1500, y: 1400, w: 800, h: 1000, tint: '#7a3a6e', tall: true },
+  { name: 'Dockside', x: 2300, y: 1400, w: 1100, h: 1000, tint: '#3a5a7a', tall: false },
   { name: 'Sandside', x: 300, y: 2600, w: 2800, h: 500, tint: '#c9a86a', tall: false },
 ];
 
@@ -28,6 +34,8 @@ export function districtAt(x, y) {
 }
 
 // Vehicle models the player can steal or drive. All invented.
+// Index 8 is the Harbor Hawk motorcycle: quicker off the line and
+// faster flat out than any car, but fragile and it leans hard.
 export const CAR_MODELS = [
   { name: 'Civic Dart', color: '#d84a4a', top: 240, accel: 150, len: 52, w: 26 },
   { name: 'Harbor Taxi', color: '#f2c230', top: 220, accel: 140, len: 52, w: 26 },
@@ -37,7 +45,18 @@ export const CAR_MODELS = [
   { name: 'Dune Buggy', color: '#7ac74a', top: 230, accel: 160, len: 50, w: 28 },
   { name: 'Meridian PD', color: '#22304a', top: 300, accel: 200, len: 54, w: 26 },
   { name: 'Vault Runner', color: '#1a1a22', top: 340, accel: 230, len: 56, w: 26 },
+  { name: 'Harbor Hawk', color: '#e8a23a', top: 330, accel: 260, len: 46, w: 18, bike: true },
 ];
+
+export function isBikeModel(idx) { return !!CAR_MODELS[idx]?.bike; }
+
+// Weapons Rae can carry. The pistol is hers from the start; the
+// scattergun is Marisol's reward for clearing Foundry Row (mission 3)
+// and is picked up at the Hideout. Keys 1 / 2 switch between them.
+export const WEAPONS = {
+  pistol: { name: 'Pistol', damage: 25, rate: 0.18, pellets: 1, spread: 0, range: 0.7, ammo: 24 },
+  scattergun: { name: 'Scattergun', damage: 16, rate: 0.6, pellets: 5, spread: 0.3, range: 0.45, ammo: 12 },
+};
 
 export const PED_NAMES = [
   'Milo', 'Priya', 'Otto', 'Lena', 'Kofi', 'Sana', 'Ruth', 'Diego',
@@ -48,6 +67,9 @@ export const PED_COLORS = [
   '#e8b04b', '#4ba3e8', '#e84b7a', '#7ac74a', '#b06ae8',
   '#e86a3a', '#4bd8c2', '#d8d84b', '#8a6a4b', '#c24b4b',
 ];
+
+// Dockside workers wear hi-vis; the palette gives them away at a glance.
+export const DOCK_COLORS = ['#e8d84b', '#e86a3a', '#4ba3e8', '#7ac74a'];
 
 // Story cast (original characters).
 export const CAST = {

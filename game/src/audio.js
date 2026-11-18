@@ -1,12 +1,13 @@
 // NEON HARBOR — sound: everything is synthesised with WebAudio.
-// No audio files, no network. Engine hum, gunshots, sirens, pickups,
-// a mission jingle and a looping synthwave bassline.
+// No audio files, no network. Engine hum (higher and raspier on a
+// bike), gunshots, the scattergun's boom, sirens, pickups, a mission
+// jingle, a boss sting, and a looping synthwave bassline.
 
 export function createAudio() {
   let ctx = null;
   let muted = false;
   let musicTimer = null;
-  let engineOsc = null, engineGain = null;
+  let engineOsc = null, engineGain = null, engineBike = false;
   let sirenOsc = null, sirenGain = null;
   const bassNotes = [55, 55, 65.41, 49, 55, 55, 82.41, 73.42]; // A1 A1 C2 G1 ...
   let bassStep = 0;
@@ -51,6 +52,7 @@ export function createAudio() {
     toggleMute() { muted = !muted; if (muted) this.stopEngine(); return muted; },
 
     shoot() { noise(0.12, 0.5, 2400); tone(180, 0.08, 'square', 0.18, 60); },
+    boom() { noise(0.35, 0.7, 900); tone(120, 0.25, 'sawtooth', 0.3, 40); },
     hit() { tone(220, 0.1, 'sawtooth', 0.2, 110); },
     pickup() { tone(660, 0.09, 'sine', 0.25); setTimeout(() => tone(990, 0.12, 'sine', 0.25), 70); },
     cash() { tone(880, 0.08, 'triangle', 0.25); setTimeout(() => tone(1174, 0.14, 'triangle', 0.25), 80); },
@@ -61,19 +63,25 @@ export function createAudio() {
     missionStart() { [523, 659, 784].forEach((f, i) => setTimeout(() => tone(f, 0.16, 'triangle', 0.25), i * 110)); },
     missionDone() { [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, 0.18, 'triangle', 0.28), i * 120)); },
     busted() { tone(330, 0.5, 'sawtooth', 0.25, 165); },
+    // Short low sting when Dario Kess himself shows up.
+    bossSting() { [110, 116.5, 110].forEach((f, i) => setTimeout(() => tone(f, 0.3, 'sawtooth', 0.22, f * 0.9), i * 160)); },
 
-    startEngine() {
+    startEngine(isBike) {
       const c = ensure(); if (!c || engineOsc || muted) return;
+      engineBike = !!isBike;
       engineOsc = c.createOscillator(); engineGain = c.createGain();
-      engineOsc.type = 'sawtooth'; engineOsc.frequency.value = 60;
+      engineOsc.type = engineBike ? 'square' : 'sawtooth';
+      engineOsc.frequency.value = engineBike ? 90 : 60;
       engineGain.gain.value = 0.03;
-      const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 420;
+      const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = engineBike ? 900 : 420;
       engineOsc.connect(f); f.connect(engineGain); engineGain.connect(c.destination);
       engineOsc.start();
     },
     setEngine(speed01) {
       if (engineOsc && ctx) {
-        engineOsc.frequency.setTargetAtTime(55 + speed01 * 130, ctx.currentTime, 0.08);
+        const base = engineBike ? 90 : 55;
+        const span = engineBike ? 190 : 130;
+        engineOsc.frequency.setTargetAtTime(base + speed01 * span, ctx.currentTime, 0.08);
         engineGain.gain.setTargetAtTime(0.02 + speed01 * 0.05, ctx.currentTime, 0.1);
       }
     },

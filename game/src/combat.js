@@ -1,6 +1,7 @@
 // NEON HARBOR — combat and effects: bullets, muzzle flashes, blood,
-// sparks, smoke, explosions, and the cash / health pickups scattered
-// around Port Meridian. Also the armed gang members missions spawn.
+// sparks, smoke, explosions, and the cash / health / ammo / weapon
+// pickups scattered around Port Meridian. Also the armed gang members
+// missions spawn — including Dario Kess himself in the finale.
 
 import { clamp, randRange } from './config.js';
 
@@ -67,19 +68,32 @@ export function spawnPickups(fx, city, rng) {
     { x: 1700, y: 3060, kind: 'health', amount: 40 },
     { x: 3060, y: 700, kind: 'ammo', amount: 24 },
     { x: 1020, y: 1700, kind: 'cash', amount: 150 },
+    { x: 2900, y: 1900, kind: 'cash', amount: 300 },
   ];
   for (const s of spots) fx.pickups.push({ ...s, bob: rng() * 6 });
 }
 
-// Gang members: armed enemies for combat missions.
-export function spawnGang(x, y, count, rng) {
+// A weapon pickup on the ground (the scattergun Marisol leaves at
+// the Hideout after mission 3). Walk over it to take it.
+export function spawnWeaponPickup(fx, x, y, weaponKey) {
+  fx.pickups.push({ x, y, kind: 'weapon', weapon: weaponKey, amount: 0, bob: 0 });
+}
+
+// Gang members: armed enemies for combat missions. With boss: true
+// the last one spawned is Dario Kess — three times the health, a
+// gold jacket, and he shoots straighter than his crew.
+export function spawnGang(x, y, count, rng, opts = {}) {
   const out = [];
   for (let i = 0; i < count; i++) {
+    const isBoss = opts.boss && i === count - 1;
     out.push({
       x: x + randRange(rng, -70, 70), y: y + randRange(rng, -70, 70),
-      r: 12, angle: 0, hp: 50, speed: 120,
+      r: isBoss ? 15 : 12, angle: 0,
+      hp: isBoss ? 150 : 50, maxHp: isBoss ? 150 : 50,
+      speed: isBoss ? 95 : 120, boss: !!isBoss,
+      name: isBoss ? 'Dario Kess' : 'Tide crew',
       shootT: randRange(rng, 0.5, 1.5), state: 'fight', walkPhase: 0,
-      color: '#3a3a4a', shirt: '#c23a3a',
+      color: '#3a3a4a', shirt: isBoss ? '#e8b93a' : '#c23a3a',
     });
   }
   return out;
@@ -104,9 +118,10 @@ export function updateGang(gang, player, dt, fx, audio) {
     }
     g.shootT -= dt;
     if (g.shootT <= 0 && d < 420) {
-      g.shootT = randRange(Math.random, 0.9, 1.7);
-      const spread = randRange(Math.random, -0.12, 0.12);
-      fx.bullets.push({ x: g.x + Math.cos(g.angle) * 20, y: g.y + Math.sin(g.angle) * 20, angle: g.angle + spread, speed: 620, fromPlayer: false, life: 0.8 });
+      // Kess shoots faster and straighter than his crew.
+      g.shootT = g.boss ? randRange(Math.random, 0.6, 1.0) : randRange(Math.random, 0.9, 1.7);
+      const spread = g.boss ? randRange(Math.random, -0.05, 0.05) : randRange(Math.random, -0.12, 0.12);
+      fx.bullets.push({ x: g.x + Math.cos(g.angle) * 20, y: g.y + Math.sin(g.angle) * 20, angle: g.angle + spread, speed: 620, fromPlayer: false, life: 0.8, damage: g.boss ? 12 : 9 });
       audio && audio.shoot();
     }
   }

@@ -1,7 +1,9 @@
-// NEON HARBOR — vehicles: car physics, traffic AI that follows the
-// street grid, parked cars, and car damage / explosions.
+// NEON HARBOR — vehicles: car and motorcycle physics, traffic AI
+// that follows the street grid, parked vehicles, and damage /
+// explosions. Bikes are quicker and lean into turns, but they are
+// fragile: one hard wall hit can end a ride.
 
-import { WORLD_W, WORLD_H, BLOCK, ROAD_W, CAR_MODELS, clamp, angleLerp, dist2, mulberry32, pick, randRange } from './config.js';
+import { WORLD_W, WORLD_H, BLOCK, ROAD_W, CAR_MODELS, clamp, lerp, angleLerp, dist2, mulberry32, pick, randRange } from './config.js';
 import { streetCenters, randomRoadPoint, pointInBuilding } from './city.js';
 
 let nextCarId = 1;
@@ -12,6 +14,7 @@ export function makeCar(modelIdx, x, y, angle, opts = {}) {
     id: nextCarId++, model: modelIdx, name: m.name, color: opts.color || m.color,
     x, y, angle, speed: 0, topSpeed: m.top, accel: m.accel,
     len: m.len, w: m.w, hp: 100, maxHp: 100,
+    bike: !!m.bike, lean: 0,
     traffic: !!opts.traffic, police: !!opts.police, parked: !!opts.parked,
     driver: opts.driver || null, // 'player' | 'ped' | null
     route: opts.route || null, routeIdx: 0, stuckT: 0,
@@ -36,7 +39,8 @@ export function spawnTraffic(city, rng, count) {
   const cars = [];
   for (let i = 0; i < count; i++) {
     const p = randomRoadPoint(rng);
-    const modelIdx = Math.floor(rng() * 6); // never police / vault runner in traffic
+    // One in seven traffic vehicles is a Harbor Hawk rider.
+    const modelIdx = rng() < 0.14 ? 8 : Math.floor(rng() * 6);
     const angle = rng() < 0.5 ? 0 : Math.PI / 2;
     const car = makeCar(modelIdx, p.x, p.y, angle, { traffic: true, driver: 'ped' });
     car.route = randomRoute(rng, p.x, p.y);
@@ -55,13 +59,18 @@ export function spawnParked(city, rng, count) {
     const x = along ? cx + (rng() < 0.5 ? -1 : 1) * (ROAD_W / 2 - 14) : randRange(rng, 300, WORLD_W - 300);
     const y = along ? randRange(rng, 300, WORLD_H - 400) : cy + (rng() < 0.5 ? -1 : 1) * (ROAD_W / 2 - 14);
     if (pointInBuilding(city, x, y)) continue;
-    const modelIdx = Math.floor(rng() * 6);
+    // A bike is parked by the marina or the hideout more often than not.
+    const modelIdx = rng() < 0.22 ? 8 : Math.floor(rng() * 6);
     cars.push(makeCar(modelIdx, x, y, along ? Math.PI / 2 : 0, { parked: true }));
   }
+  // A Harbor Hawk is always waiting near the Hideout and one by the Marina.
+  cars.push(makeCar(8, 560, 560, Math.PI / 2, { parked: true }));
+  cars.push(makeCar(8, 2760, 560, 0, { parked: true }));
   return cars;
 }
 
 // Player driving: arcade handling with drift on the handbrake.
+// Bikes turn sharper and lean, but they punish wall hits.
 export function driveCar(car, input, dt, city) {
   const accelIn = input.is('up') ? 1 : input.is('down') ? -0.7 : 0;
   const steerIn = input.is('left') ? -1 : input.is('right') ? 1 : 0;
@@ -73,28 +82,34 @@ export function driveCar(car, input, dt, city) {
   car.speed = clamp(car.speed, -car.topSpeed * 0.45, car.topSpeed);
   const steerAuthority = clamp(Math.abs(car.speed) / 90, 0, 1) * (car.speed >= 0 ? 1 : -1);
   const grip = braking ? 0.55 : 1;
-  car.angle += steerIn * 2.1 * steerAuthority * dt * grip;
+  // Bikes steer harder and lean into the turn; cars grip more.
+  const steerRate = car.bike ? 2.9 : 2.1;
+  car.angle += steerIn * steerRate * steerAuthority * dt * grip;
+  car.lean = car.bike ? lerp(car.lean, steerIn * 0.5 * steerAuthority, clamp(dt * 8, 0, 1)) : 0;
   car.brakeLight = braking || accelIn < 0;
   const nx = car.x + Math.cos(car.angle) * car.speed * dt;
   const ny = car.y + Math.sin(car.angle) * car.speed * dt;
-  // Buildings stop the car (with a scrape, not a full halt).
-  const r = car.len * 0.42;
+  // Buildings stop the vehicle (with a scrape, not a full halt).
+  // Bikes are narrower, so they thread gaps a car cannot.
+  const r = car.bike ? car.w * 0.75 : car.len * 0.42;
   let hitWall = false;
-  for (const b of city.buildings) {
+  const solids = city.containers ? [...city.buildings, ...city.containers] : city.buildings;
+  for (const b of solids) {
     const cx = clamp(nx, b.x, b.x + b.w), cy = clamp(ny, b.y, b.y + b.h);
     if (dist2(nx, ny, cx, cy) < r * r) { hitWall = true; break; }
   }
   if (!hitWall && nx > 20 && nx < WORLD_W - 20 && ny > 20 && ny < WORLD_H - 20) {
     car.x = nx; car.y = ny;
   } else {
-    car.speed *= 0.35;
-    car.hp -= Math.abs(car.speed) * 0.012 + 0.4;
-    if (hitWall) car.hp -= 0.4;
+    car.speed *= car.bike ? 0.2 : 0.35;
+    // A bike rider eats the wall: extra damage and a hard slowdown.
+    car.hp -= Math.abs(car.speed) * (car.bike ? 0.03 : 0.012) + 0.4;
+    if (hitWall) car.hp -= car.bike ? 1.2 : 0.4;
   }
   return hitWall;
 }
 
-// Traffic AI: follow the route, slow for the car ahead, re-route when done.
+// Traffic AI: follow the route, slow for the vehicle ahead, re-route when done.
 export function updateTrafficCar(car, cars, dt, rng) {
   if (car.dead || !car.route) return;
   const target = car.route[car.routeIdx];
@@ -111,7 +126,7 @@ export function updateTrafficCar(car, cars, dt, rng) {
   }
   const want = Math.atan2(dy, dx);
   car.angle = angleLerp(car.angle, want, clamp(dt * 3.2, 0, 1));
-  // Slow down if another car is close ahead.
+  // Slow down if another vehicle is close ahead.
   let blocked = false;
   for (const o of cars) {
     if (o === car || o.dead) continue;
@@ -121,22 +136,21 @@ export function updateTrafficCar(car, cars, dt, rng) {
       if (ahead > 0) { blocked = true; break; }
     }
   }
-  const cruise = blocked ? 0 : 110;
+  const cruise = blocked ? 0 : car.bike ? 140 : 110;
   car.speed = lerp(car.speed, cruise, clamp(dt * 1.5, 0, 1));
   car.x += Math.cos(car.angle) * car.speed * dt;
   car.y += Math.sin(car.angle) * car.speed * dt;
 }
 
-export function lerp(a, b, t) { return a + (b - a) * t; }
-
-// Simple circle collision between cars; returns true if a bump happened.
+// Simple circle collision between vehicles; returns true if a bump happened.
+// Bikes are narrow, so they take less of the hit and slip past more often.
 export function collideCars(cars, audio) {
   let bumped = false;
   for (let i = 0; i < cars.length; i++) {
     for (let j = i + 1; j < cars.length; j++) {
       const a = cars[i], b = cars[j];
       if (a.dead || b.dead) continue;
-      const rr = (a.len + b.len) * 0.42;
+      const rr = ((a.bike ? a.len * 0.3 : a.len) + (b.bike ? b.len * 0.3 : b.len)) * 0.42;
       const d2 = dist2(a.x, a.y, b.x, b.y);
       if (d2 < rr * rr && d2 > 0.01) {
         const d = Math.sqrt(d2);
@@ -146,7 +160,8 @@ export function collideCars(cars, audio) {
         b.x += nx * push; b.y += ny * push;
         const impact = Math.abs(a.speed - b.speed);
         if (impact > 60) {
-          a.hp -= impact * 0.02; b.hp -= impact * 0.02;
+          a.hp -= impact * 0.02 * (a.bike ? 1.6 : 1);
+          b.hp -= impact * 0.02 * (b.bike ? 1.6 : 1);
           a.speed *= 0.6; b.speed *= 0.6;
           bumped = true;
         }

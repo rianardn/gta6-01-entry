@@ -1,10 +1,12 @@
 // NEON HARBOR — input: keyboard + mouse, with an action map the rest
 // of the game reads. Also tracks the mouse in world space for aiming.
+// Keys 1 / 2 switch between the pistol and the scattergun.
 
 export const ACTION = {
   UP: 'up', DOWN: 'down', LEFT: 'left', RIGHT: 'right',
   SPRINT: 'sprint', ENTER: 'enter', BRAKE: 'brake',
   SHOOT: 'shoot', PAUSE: 'pause', MUTE: 'mute', CONFIRM: 'confirm',
+  WEAPON1: 'weapon1', WEAPON2: 'weapon2',
 };
 
 const KEYMAP = {
@@ -18,6 +20,8 @@ const KEYMAP = {
   Escape: 'pause', KeyP: 'pause',
   KeyM: 'mute',
   Enter: 'confirm',
+  Digit1: 'weapon1',
+  Digit2: 'weapon2',
 };
 
 export function createInput(canvas) {

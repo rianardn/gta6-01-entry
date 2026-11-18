@@ -1,6 +1,7 @@
-// NEON HARBOR — the story: five missions with Marisol Vega, plus
+// NEON HARBOR — the story: six missions with Marisol Vega, plus
 // repeatable courier drops for cash. Each mission has stages with a
-// waypoint, an objective line, and a reward. The finale is the vault run.
+// waypoint, an objective line, and a reward. The finale is the vault
+// run; the epilogue settles the score with Dario Kess at the docks.
 
 import { LANDMARKS } from './city.js';
 import { CAST } from './config.js';
@@ -33,6 +34,7 @@ export const MISSIONS = [
       { type: 'combat', at: LANDMARKS.foundry, count: 4, text: 'Take down the Tide crew (4 left)' },
     ],
     reward: 900, rep: 20,
+    unlock: 'scattergun',
   },
   {
     id: 'm4', title: 'The Drop', giver: CAST.fixer,
@@ -51,6 +53,16 @@ export const MISSIONS = [
     ],
     reward: 2500, rep: 40,
   },
+  {
+    id: 'm6', title: 'The Tide Turns', giver: CAST.fixer,
+    brief: 'Kess is loading the last of the vault cash onto a freighter at the East Pier. The Tide\u2019s crew is dug in among the containers — and Kess himself is there. End it, then vanish before the PD arrives.',
+    stages: [
+      { type: 'goto', at: LANDMARKS.dockside, radius: 120, text: 'Reach the Dockside container yards' },
+      { type: 'combat', at: LANDMARKS.pier, count: 6, boss: true, text: 'Take down the Tide crew — Dario Kess is with them (6 left)' },
+      { type: 'escape', text: 'Lose the wanted level, then reach the Hideout', at: LANDMARKS.hideout, radius: 110 },
+    ],
+    reward: 3500, rep: 50,
+  },
 ];
 
 export function missionById(id) {
@@ -64,7 +76,7 @@ export function nextMissionId(doneIds) {
 
 // Repeatable side job: pick up a parcel, deliver it, get paid.
 export function makeCourierJob(rng) {
-  const spots = [LANDMARKS.marina, LANDMARKS.plaza, LANDMARKS.pier, LANDMARKS.beach, LANDMARKS.foundry, LANDMARKS.garage];
+  const spots = [LANDMARKS.marina, LANDMARKS.plaza, LANDMARKS.pier, LANDMARKS.beach, LANDMARKS.foundry, LANDMARKS.garage, LANDMARKS.dockside];
   const a = spots[Math.floor(rng() * spots.length)];
   let b = spots[Math.floor(rng() * spots.length)];
   if (b === a) b = spots[(spots.indexOf(a) + 3) % spots.length];

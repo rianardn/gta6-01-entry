@@ -1,13 +1,15 @@
 // NEON HARBOR — screenshot staging: ?shot=start|drive|chase|mission
 // puts a deterministic scene on screen so screenshots are real renders
 // of the game. Each scene paints the same way the live game does.
+// The drive shot rides the Harbor Hawk; the mission shot stages the
+// m6 finale at the East Pier.
 
 import { SCREEN } from './render.js';
 import { LANDMARKS } from './city.js';
 import { makeCar, spawnTraffic } from './traffic.js';
 import { spawnGang } from './combat.js';
 import { addHeat } from './police.js';
-import { missionById } from './missions.js';
+import { giveWeapon } from './player.js';
 
 export function stageShot(name, state, hooks) {
   const { startMission, audio } = hooks;
@@ -24,15 +26,17 @@ export function stageShot(name, state, hooks) {
   state.cars = state.cars.filter(c => c.parked);
   if (name === 'drive') {
     state.clock = 100; // bright midday
-    const car = makeCar(2, 1700, 1020, 0, { driver: 'player' });
-    p.inCar = car; p.x = car.x; p.y = car.y;
-    state.cars.push(car);
+    // Rae on the Harbor Hawk, leaning through Downtown traffic.
+    const bike = makeCar(8, 1700, 1020, 0, { driver: 'player' });
+    bike.lean = 0.35; bike.speed = 240;
+    p.inCar = bike; p.x = bike.x; p.y = bike.y;
+    state.cars.push(bike);
     state.cars.push(...spawnTraffic(state.city, state.rng, 10));
     state.missionTitle = 'First Fare';
-    state.objective = 'Drive to Marina Point';
+    state.objective = 'Ride the Harbor Hawk to Marina Point';
     state.waypoint = { x: LANDMARKS.marina.x, y: LANDMARKS.marina.y };
     state.cash = 1250; state.rep = 25;
-    state.cam.x = car.x; state.cam.y = car.y; state.cam.zoom = 0.62;
+    state.cam.x = bike.x; state.cam.y = bike.y; state.cam.zoom = 0.8;
     return SCREEN.PLAY;
   }
 
@@ -63,17 +67,21 @@ export function stageShot(name, state, hooks) {
   if (name === 'mission') {
     state.clock = 90; // late afternoon
     p.inCar = null;
-    p.x = LANDMARKS.foundry.x - 60; p.y = LANDMARKS.foundry.y + 40;
-    p.aimAngle = 0.4;
-    state.gang = spawnGang(LANDMARKS.foundry.x + 80, LANDMARKS.foundry.y - 20, 4, state.rng);
-    state.fx.bullets.push({ x: p.x + 40, y: p.y - 10, angle: 0.3, speed: 900, fromPlayer: true, life: 0.4 });
-    state.fx.spawnBlood(LANDMARKS.foundry.x + 60, LANDMARKS.foundry.y - 10);
-    addHeat(state.wanted, 22, 'street heat');
-    state.missionTitle = 'Street Heat';
-    state.objective = 'Take down the Tide crew (4 left)';
-    state.waypoint = { x: LANDMARKS.foundry.x, y: LANDMARKS.foundry.y };
-    state.cash = 2100; state.rep = 45;
-    state.cam.x = p.x + 120; state.cam.y = p.y; state.cam.zoom = 0.85;
+    p.x = LANDMARKS.pier.x - 260; p.y = LANDMARKS.pier.y + 60;
+    p.aimAngle = 0.15;
+    // The m6 finale: Kess and his crew dug in among the containers.
+    giveWeapon(p, 'scattergun');
+    p.weapon = 'scattergun';
+    p.ammo = 12; p.maxAmmo = 12;
+    state.gang = spawnGang(LANDMARKS.pier.x - 60, LANDMARKS.pier.y - 40, 6, state.rng, { boss: true });
+    state.fx.bullets.push({ x: p.x + 40, y: p.y - 10, angle: 0.3, speed: 900, fromPlayer: true, life: 0.4, damage: 16 });
+    state.fx.spawnBlood(LANDMARKS.pier.x - 40, LANDMARKS.pier.y - 20);
+    addHeat(state.wanted, 22, 'the tide turns');
+    state.missionTitle = 'The Tide Turns';
+    state.objective = 'Take down the Tide crew — Dario Kess is with them (6 left)';
+    state.waypoint = { x: LANDMARKS.pier.x, y: LANDMARKS.pier.y };
+    state.cash = 5600; state.rep = 95;
+    state.cam.x = p.x + 140; state.cam.y = p.y; state.cam.zoom = 0.8;
     return SCREEN.PLAY;
   }
 

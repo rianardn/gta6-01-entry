@@ -1,9 +1,11 @@
 // NEON HARBOR — rendering: the city from above with shaded buildings,
-// day/night light, cars, people, particles, and the full HUD: cash,
-// health, wanted stars, mission objective, speed, clock, and a live
-// minimap. Menus (title / pause / wasted / busted) are drawn here too.
+// the Dockside container yards, day/night light, cars and the Harbor
+// Hawk motorcycle, people, particles, and the full HUD: cash, health,
+// wanted stars, the current weapon, mission objective, speed, clock,
+// and a live minimap. Menus (title / pause / wasted / busted) are
+// drawn here too.
 
-import { WORLD_W, WORLD_H, BLOCK, ROAD_W, DISTRICTS, CAR_MODELS, districtAt, clamp, lerp } from './config.js';
+import { WORLD_W, WORLD_H, BLOCK, ROAD_W, DISTRICTS, CAR_MODELS, WEAPONS, districtAt, clamp, lerp } from './config.js';
 import { streetCenters, onRoad } from './city.js';
 import { wantedFor } from './police.js';
 
@@ -57,7 +59,7 @@ export function createRenderer(canvas) {
         ctx.fillStyle = '#3f8a4a';
         ctx.fillRect(p.x - p.w / 2, p.y - p.h / 2, p.w, p.h);
       }
-      // Roads: asphalt with centre dashes.
+      // Roads: asphalt with edge lines and centre dashes.
       ctx.fillStyle = '#33363d';
       const { xs, ys } = streetCenters();
       for (const cx of xs) ctx.fillRect(cx - ROAD_W / 2, 0, ROAD_W, WORLD_H);
@@ -65,8 +67,6 @@ export function createRenderer(canvas) {
       ctx.fillStyle = '#5a5e68';
       for (const cx of xs) ctx.fillRect(cx - ROAD_W / 2, 0, 6, WORLD_H);
       for (const cy of ys) ctx.fillRect(0, cy - ROAD_W / 2, WORLD_W, 6);
-      ctx.fillStyle = '#d8c84a';
-      ctx.fillRect(0, 0, 0, 0);
       // Centre dashes.
       ctx.fillStyle = 'rgba(216,200,74,0.7)';
       for (const cy of ys) {
@@ -87,6 +87,24 @@ export function createRenderer(canvas) {
       ctx.fillStyle = '#8a6a3a';
       for (let y = city.pier.y - city.pier.h / 2; y < city.pier.y + city.pier.h / 2; y += 40) {
         ctx.fillRect(city.pier.x - city.pier.w / 2, y, city.pier.w, 4);
+      }
+
+      // Shipping containers in the Dockside yards.
+      if (city.containers) {
+        for (const cn of city.containers) {
+          if (cn.x > vx1 || cn.x + cn.w < vx0 || cn.y > vy1 || cn.y + cn.h < vy0) continue;
+          ctx.fillStyle = 'rgba(0,0,0,0.3)';
+          ctx.fillRect(cn.x + 3, cn.y + 4, cn.w, cn.h);
+          ctx.fillStyle = cn.color;
+          ctx.fillRect(cn.x, cn.y, cn.w, cn.h);
+          ctx.fillStyle = 'rgba(255,255,255,0.18)';
+          const ribs = Math.max(2, Math.floor(cn.w / 14));
+          for (let r = 0; r < ribs; r++) ctx.fillRect(cn.x + 4 + r * 14, cn.y + 3, 3, cn.h - 6);
+          if (cn.stacked) {
+            ctx.fillStyle = 'rgba(255,255,255,0.22)';
+            ctx.fillRect(cn.x + 3, cn.y - 5, cn.w - 6, 5);
+          }
+        }
       }
 
       // Buildings: shaded footprint + raised roof for a 2.5D read.
@@ -131,6 +149,7 @@ export function createRenderer(canvas) {
         ctx.translate(pk.x, pk.y + bob);
         if (pk.kind === 'cash') { ctx.fillStyle = '#2fae5a'; ctx.fillRect(-9, -7, 18, 14); ctx.fillStyle = '#e8f5e9'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('$', 0, 4); }
         else if (pk.kind === 'health') { ctx.fillStyle = '#fff'; ctx.fillRect(-9, -9, 18, 18); ctx.fillStyle = '#d83a3a'; ctx.fillRect(-2, -6, 4, 12); ctx.fillRect(-6, -2, 12, 4); }
+        else if (pk.kind === 'weapon') { ctx.fillStyle = '#e8a23a'; ctx.fillRect(-11, -6, 22, 12); ctx.fillStyle = '#1a1a22'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('SG', 0, 3); }
         else { ctx.fillStyle = '#f2c230'; ctx.fillRect(-8, -8, 16, 16); ctx.fillStyle = '#333'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('AMMO', 0, 3); }
         ctx.restore();
       }
@@ -151,16 +170,26 @@ export function createRenderer(canvas) {
         ctx.restore();
       }
 
-      // Cars.
+      // Vehicles (cars and bikes).
       for (const car of cars) {
         if (car.dead) continue;
         if (car.x < vx0 - 80 || car.x > vx1 + 80 || car.y < vy0 - 80 || car.y > vy1 + 80) continue;
-        drawCar(ctx, car, day);
+        if (car.bike) drawBike(ctx, car, day);
+        else drawCar(ctx, car, day);
       }
-      // Gang members.
+      // Gang members (the boss is bigger, gold, and named).
       for (const g of gang) {
         if (g.hp <= 0) continue;
         drawPerson(ctx, g.x, g.y, g.angle, g.walkPhase, g.shirt, '#222', true);
+        if (g.boss) {
+          ctx.fillStyle = '#e8b93a';
+          ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
+          ctx.fillText('KESS', g.x, g.y - 22);
+          ctx.fillStyle = 'rgba(255,255,255,0.25)';
+          ctx.fillRect(g.x - 16, g.y - 18, 32, 4);
+          ctx.fillStyle = '#ff5a4a';
+          ctx.fillRect(g.x - 16, g.y - 18, 32 * clamp(g.hp / g.maxHp, 0, 1), 4);
+        }
       }
       // Pedestrians.
       for (const p of peds) {
@@ -258,7 +287,7 @@ export function createRenderer(canvas) {
       const { player, wanted, cash, rep, clock } = state;
       const car = player.inCar;
       ctx.textAlign = 'left';
-      // Top-left: cash + rep.
+      // Top-left: cash + rep + district.
       ctx.fillStyle = 'rgba(10,14,24,0.72)';
       roundRect(ctx, 14, 14, 210, 64, 10); ctx.fill();
       ctx.fillStyle = '#7dff9a';
@@ -309,7 +338,7 @@ export function createRenderer(canvas) {
           ctx.fillText(`⏱ ${Math.ceil(state.missionTimer)}s`, cx, 140 + lines.length * 20);
         }
       }
-      // Bottom-right: health + ammo / speed (minimap owns bottom-left).
+      // Bottom-right: health + ammo / speed, and the weapon slots.
       ctx.textAlign = 'left';
       ctx.fillStyle = 'rgba(10,14,24,0.72)';
       roundRect(ctx, W - 254, H - 84, 240, 70, 10); ctx.fill();
@@ -325,15 +354,27 @@ export function createRenderer(canvas) {
       ctx.font = 'bold 12px sans-serif';
       if (car) {
         const kmh = Math.round(Math.abs(car.speed) * 0.55);
-        ctx.fillText(`${kmh} km/h   •   CAR ${Math.max(0, Math.round(car.hp))}%`, W - 240, H - 24);
+        ctx.fillText(`${kmh} km/h   •   ${car.bike ? 'BIKE' : 'CAR'} ${Math.max(0, Math.round(car.hp))}%`, W - 240, H - 24);
       } else {
-        ctx.fillText(`AMMO ${player.ammo}${player.reloadT > 0 ? ' — RELOADING…' : ''}`, W - 240, H - 24);
+        const w = WEAPONS[player.weapon];
+        ctx.fillText(`${w.name.toUpperCase()}  •  AMMO ${player.ammo}${player.reloadT > 0 ? ' — RELOADING…' : ''}`, W - 240, H - 24);
+      }
+      // Weapon slots above the health box (only when both are owned).
+      if (player.ownedWeapons.length > 1) {
+        ctx.textAlign = 'left';
+        ctx.fillStyle = 'rgba(10,14,24,0.72)';
+        roundRect(ctx, W - 254, H - 118, 240, 26, 8); ctx.fill();
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillStyle = player.weapon === 'pistol' ? '#ffd23a' : 'rgba(255,255,255,0.6)';
+        ctx.fillText('[1] PISTOL', W - 240, H - 100);
+        ctx.fillStyle = player.weapon === 'scattergun' ? '#ffd23a' : 'rgba(255,255,255,0.6)';
+        ctx.fillText('[2] SCATTERGUN', W - 140, H - 100);
       }
       // Controls hint, centred along the bottom edge.
       ctx.textAlign = 'center';
       ctx.fillStyle = 'rgba(255,255,255,0.55)';
       ctx.font = '12px sans-serif';
-      ctx.fillText('WASD move/drive • E enter car • Mouse aim, Click shoot • Shift sprint • Space brake • Esc pause • M mute', W / 2, H - 12);
+      ctx.fillText('WASD move/drive • E enter vehicle • Mouse aim, Click shoot • 1/2 weapons • Shift sprint • Space brake • Esc pause • M mute', W / 2, H - 12);
       // Toasts (centre, fading).
       if (state.toast && state.toastT > 0) {
         ctx.globalAlpha = clamp(state.toastT, 0, 1);
@@ -367,6 +408,11 @@ export function createRenderer(canvas) {
       // Buildings.
       ctx.fillStyle = 'rgba(180,190,210,0.5)';
       for (const b of state.city.buildings) ctx.fillRect(mx + b.x * scale, my + b.y * scale, Math.max(2, b.w * scale), Math.max(2, b.h * scale));
+      // Containers (Dockside shows as a coloured patch).
+      if (state.city.containers) {
+        ctx.fillStyle = 'rgba(184,74,42,0.7)';
+        for (const cn of state.city.containers) ctx.fillRect(mx + cn.x * scale, my + cn.y * scale, Math.max(2, cn.w * scale), Math.max(2, cn.h * scale));
+      }
       // Waypoint.
       if (state.waypoint) {
         ctx.fillStyle = '#ffd23a';
@@ -413,15 +459,15 @@ export function createRenderer(canvas) {
       ctx.fillStyle = '#fff';
       ctx.font = '17px sans-serif';
       ctx.fillText('Rae Calloway came home to Port Meridian with nothing but a stolen past', W / 2, H * 0.2 + 208);
-      ctx.fillText('and a fixer named Marisol Vega. Five jobs stand between her and freedom.', W / 2, H * 0.2 + 232);
+      ctx.fillText('and a fixer named Marisol Vega. Six jobs stand between her and freedom.', W / 2, H * 0.2 + 232);
       ctx.fillStyle = '#ffd23a';
       ctx.font = 'bold 20px sans-serif';
       ctx.fillText(state.hasSave ? '▶  CONTINUE  (Enter)' : '▶  NEW GAME  (Enter)', W / 2, H * 0.62);
       ctx.fillStyle = 'rgba(255,255,255,0.85)';
       ctx.font = '15px sans-serif';
-      ctx.fillText('WASD move / drive   •   E steal & enter cars   •   Mouse aim, Click to shoot', W / 2, H * 0.68);
-      ctx.fillText('Shift sprint   •   Space handbrake   •   Esc pause & save   •   M mute', W / 2, H * 0.71);
-      ctx.fillText('Steal cars, outrun the Meridian PD, finish all five missions.', W / 2, H * 0.74);
+      ctx.fillText('WASD move / drive   •   E steal & ride cars and bikes   •   Mouse aim, Click to shoot', W / 2, H * 0.68);
+      ctx.fillText('Shift sprint   •   Space handbrake   •   1 / 2 switch weapons   •   Esc pause & save   •   M mute', W / 2, H * 0.71);
+      ctx.fillText('Steal cars and bikes, outrun the Meridian PD, finish all six missions.', W / 2, H * 0.74);
       if (best > 0) {
         ctx.fillStyle = '#7dff9a';
         ctx.font = 'bold 14px sans-serif';
@@ -441,7 +487,7 @@ export function createRenderer(canvas) {
       ctx.fillText('PAUSED', W / 2, H * 0.34);
       ctx.font = '17px sans-serif';
       ctx.fillStyle = 'rgba(255,255,255,0.85)';
-      ctx.fillText(`Cash $${state.cash.toLocaleString('en-US')}  •  REP ${state.rep}  •  Missions done ${state.doneMissions.length}/5`, W / 2, H * 0.34 + 36);
+      ctx.fillText(`Cash $${state.cash.toLocaleString('en-US')}  •  REP ${state.rep}  •  Missions done ${state.doneMissions.length}/6`, W / 2, H * 0.34 + 36);
       ctx.fillStyle = '#ffd23a';
       ctx.font = 'bold 19px sans-serif';
       ctx.fillText('Enter — resume      S — save game      R — restart run      Q — quit to title', W / 2, H * 0.5);
@@ -464,7 +510,7 @@ export function createRenderer(canvas) {
         : 'Rae goes down in the streets of Port Meridian. The city keeps moving.', W / 2, H * 0.4 + 40);
       ctx.fillStyle = '#ffd23a';
       ctx.font = 'bold 19px sans-serif';
-      ctx.fillText(`Cash $${state.cash.toLocaleString('en-US')}  •  Missions ${state.doneMissions.length}/5   —   Enter to try again`, W / 2, H * 0.55);
+      ctx.fillText(`Cash $${state.cash.toLocaleString('en-US')}  •  Missions ${state.doneMissions.length}/6   —   Enter to try again`, W / 2, H * 0.55);
     },
   };
 }
@@ -496,6 +542,55 @@ function wrapText(c, text, maxW, font) {
 export function dayFactor(clock) {
   const t = (clock / 240) % 1;
   return clamp(0.35 + 0.65 * Math.sin(Math.PI * clamp(t, 0, 1)), 0.12, 1);
+}
+
+// A motorcycle: a narrow frame, two wheels, and a rider leaning into
+// the turn. The lean comes from the bike's physics, so it reads as
+// speed even in a still frame.
+function drawBike(c, bike, day) {
+  c.save();
+  c.translate(bike.x, bike.y);
+  c.rotate(bike.angle);
+  // Shadow.
+  c.fillStyle = 'rgba(0,0,0,0.35)';
+  c.fillRect(-bike.len / 2 + 3, -bike.w / 2 + 4, bike.len, bike.w);
+  // Lean: the whole bike tilts sideways into the turn.
+  c.rotate(bike.lean * 0.35);
+  // Wheels.
+  c.fillStyle = '#1a1a1a';
+  c.beginPath(); c.arc(bike.len / 2 - 4, 0, 6, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.arc(-bike.len / 2 + 4, 0, 6, 0, Math.PI * 2); c.fill();
+  // Frame.
+  c.fillStyle = bike.color;
+  roundRect(c, -bike.len / 2, -5, bike.len, 10, 5); c.fill();
+  // Tank + seat.
+  c.fillStyle = 'rgba(20,24,34,0.9)';
+  roundRect(c, -4, -6, 14, 12, 4); c.fill();
+  // Rider: torso leaning forward over the tank.
+  c.fillStyle = bike.police ? '#22304a' : '#e86aa8';
+  roundRect(c, -10, -7, 12, 14, 5); c.fill();
+  // Rider's head.
+  c.fillStyle = '#e8b98a';
+  c.beginPath(); c.arc(2, 0, 5, 0, Math.PI * 2); c.fill();
+  c.fillStyle = bike.police ? '#22304a' : '#1a1a22';
+  c.beginPath(); c.arc(2, 0, 5, Math.PI * 0.4, Math.PI * 1.6); c.fill();
+  // Headlight.
+  c.fillStyle = day < 0.5 ? '#fff6c0' : '#e8e8e8';
+  c.fillRect(bike.len / 2 - 2, -2, 3, 4);
+  // Police interceptor livery.
+  if (bike.police) {
+    const blink = Math.floor(Date.now() / 300) % 2 === 0;
+    c.fillStyle = blink ? '#ff2a2a' : '#2a7aff';
+    c.beginPath(); c.arc(-2, -7, 3.5, 0, Math.PI * 2); c.fill();
+    c.fillStyle = blink ? '#2a7aff' : '#ff2a2a';
+    c.beginPath(); c.arc(-2, 7, 3.5, 0, Math.PI * 2); c.fill();
+  }
+  // Damage smoke.
+  if (bike.hp < 45) {
+    c.fillStyle = 'rgba(90,90,90,0.6)';
+    c.beginPath(); c.arc(-bike.len / 4, 0, 7 + Math.random() * 4, 0, Math.PI * 2); c.fill();
+  }
+  c.restore();
 }
 
 function drawCar(c, car, day) {

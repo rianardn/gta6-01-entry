@@ -1,16 +1,17 @@
 // NEON HARBOR — boot and the one loop. Owns the game state, the
-// mission state machine, carjacking, shooting, pickups, the camera,
-// saving, and the ?shot= staging hook used for screenshots.
+// mission state machine, carjacking (cars and bikes), shooting with
+// the pistol and the scattergun, weapon switching, pickups, the
+// camera, saving, and the ?shot= staging hook used for screenshots.
 
-import { WORLD_W, WORLD_H, STEP, SAVE_KEY, clamp, lerp, dist2, mulberry32, randRange } from './config.js';
+import { WORLD_W, WORLD_H, STEP, SAVE_KEY, WEAPONS, DISTRICTS, clamp, lerp, dist2, mulberry32, randRange } from './config.js';
 import { buildCity, randomRoadPoint, randomWalkPoint, LANDMARKS, pointInBuilding } from './city.js';
 import { createInput } from './input.js';
 import { createAudio } from './audio.js';
-import { createPlayer, updatePlayerOnFoot, playerShoot, hurtPlayer } from './player.js';
+import { createPlayer, updatePlayerOnFoot, playerShoot, hurtPlayer, switchWeapon, giveWeapon, refillAmmo } from './player.js';
 import { makeCar, spawnTraffic, spawnParked, driveCar, updateTrafficCar, collideCars, damageCar, randomRoute } from './traffic.js';
 import { spawnPeds, updatePeds, hitPed } from './pedestrians.js';
 import { createWanted, addHeat, updateWanted } from './police.js';
-import { createFx, spawnPickups, spawnGang, updateGang } from './combat.js';
+import { createFx, spawnPickups, spawnWeaponPickup, spawnGang, updateGang } from './combat.js';
 import { MISSIONS, missionById, nextMissionId, makeCourierJob } from './missions.js';
 import { saveGame, loadGame, hasSave, readBest, saveBest } from './save.js';
 import { createRenderer, SCREEN, dayFactor } from './render.js';
@@ -61,10 +62,10 @@ function startMission(state, missionId, audio) {
   state.missionTitle = m.title;
   showToast(state, `${m.giver}: ${m.brief}`, 6);
   audio && audio.missionStart();
-  applyStage(state);
+  applyStage(state, audio);
 }
 
-function applyStage(state) {
+function applyStage(state, audio) {
   const m = missionById(state.mission.id);
   const stage = m.stages[state.mission.stageIdx];
   state.objective = stage.text;
@@ -85,8 +86,9 @@ function applyStage(state) {
     state.waypoint = { x: car.x, y: car.y };
   }
   if (stage.type === 'combat' && !state.mission.spawned) {
-    state.gang = spawnGang(stage.at.x, stage.at.y, stage.count, state.rng);
+    state.gang = spawnGang(stage.at.x, stage.at.y, stage.count, state.rng, { boss: !!stage.boss });
     state.mission.spawned = true;
+    if (stage.boss) audio && audio.bossSting();
   }
 }
 
@@ -101,6 +103,12 @@ function completeStage(state, audio) {
     state.fx.floater(state.player.x, state.player.y - 30, `+$${m.reward}`, '#7dff9a');
     showToast(state, `Mission complete: ${m.title} — +$${m.reward}, +${m.rep} REP`, 5);
     audio && audio.missionDone();
+    // Mission unlocks: Marisol leaves the scattergun at the Hideout
+    // after mission 3 (Street Heat).
+    if (m.unlock === 'scattergun') {
+      spawnWeaponPickup(state.fx, LANDMARKS.hideout.x + 40, LANDMARKS.hideout.y, 'scattergun');
+      showToast(state, 'Marisol left you something at the Hideout — a scattergun. Press 2 to switch.', 6);
+    }
     state.mission = null;
     state.objective = null;
     state.missionTitle = null;
@@ -117,7 +125,7 @@ function completeStage(state, audio) {
     // Chain a courier job for cash.
     if (!state.courier) state.courier = makeCourierJob(state.rng);
   } else {
-    applyStage(state);
+    applyStage(state, audio);
     audio && audio.pickup();
   }
 }
@@ -183,7 +191,10 @@ function updateMission(state, dt, audio) {
     }
   } else if (stage.type === 'combat') {
     const left = state.gang.filter(g => g.hp > 0).length;
-    state.objective = `Take down the Tide crew (${left} left)`;
+    const boss = state.gang.find(g => g.boss && g.hp > 0);
+    state.objective = boss
+      ? `Take down the Tide crew (${left} left) — KESS IS STILL UP`
+      : `Take down the Tide crew (${left} left)`;
     if (left === 0) completeStage(state, audio);
   } else if (stage.type === 'escape') {
     if (state.wanted.stars === 0 && dist2(pos.x, pos.y, LANDMARKS.hideout.x, LANDMARKS.hideout.y) < stage.radius * stage.radius) {
@@ -199,7 +210,7 @@ function updateMission(state, dt, audio) {
 function tryEnterCar(state, audio) {
   const p = state.player;
   if (p.inCar) {
-    // Exit: step out beside the car.
+    // Exit: step out beside the vehicle.
     const car = p.inCar;
     car.speed = 0; car.driver = null;
     p.x = car.x + Math.cos(car.angle + Math.PI / 2) * 34;
@@ -217,8 +228,8 @@ function tryEnterCar(state, audio) {
   if (!best) return;
   if (best.police) addHeat(state.wanted, 25, 'stole a cruiser');
   else if (best.traffic && best.driver === 'ped') {
-    addHeat(state.wanted, 12, 'carjacking');
-    showToast(state, 'Carjacked! A witness called it in.', 3);
+    addHeat(state.wanted, best.bike ? 8 : 12, best.bike ? 'bikejacking' : 'carjacking');
+    showToast(state, best.bike ? 'Bikejacked! A witness called it in.' : 'Carjacked! A witness called it in.', 3);
     // The driver bails and runs.
     const dp = { x: best.x, y: best.y, r: 11, angle: 0, speed: 0, target: randomWalkPoint(state.rng, state.city), state: 'flee', fleeT: 4, walkPhase: 0, hp: 30, name: 'Driver', color: '#e8b04b' };
     state.peds.push(dp);
@@ -227,7 +238,7 @@ function tryEnterCar(state, audio) {
   p.inCar = best;
   p.x = best.x; p.y = best.y;
   audio && audio.enterCar();
-  audio && audio.startEngine();
+  audio && audio.startEngine(best.bike);
 }
 
 function updateBullets(state, dt, audio) {
@@ -240,13 +251,14 @@ function updateBullets(state, dt, audio) {
       continue;
     }
     if (b.fromPlayer) {
-      // Gang.
+      const dmg = b.damage ?? 25;
+      // Gang (the boss takes the same hits, just more of them).
       for (const g of state.gang) {
         if (g.hp > 0 && dist2(b.x, b.y, g.x, g.y) < 18 * 18) {
-          g.hp -= 25; b.life = 0;
+          g.hp -= dmg; b.life = 0;
           fx.spawnBlood(g.x, g.y);
           audio && audio.hit();
-          if (g.hp <= 0) fx.floater(g.x, g.y - 20, 'DOWN', '#ff6a5a');
+          if (g.hp <= 0) fx.floater(g.x, g.y - 20, g.boss ? 'KESS DOWN' : 'DOWN', '#ff6a5a');
           break;
         }
       }
@@ -264,14 +276,14 @@ function updateBullets(state, dt, audio) {
       // Cops on foot.
       for (const c of state.wanted.cops) {
         if (c.onFoot && c.hp > 0 && dist2(b.x, b.y, c.x, c.y) < 16 * 16) {
-          c.hp -= 25; b.life = 0;
+          c.hp -= dmg; b.life = 0;
           fx.spawnBlood(c.x, c.y);
           addHeat(state.wanted, 8, 'shot a cop');
           break;
         }
       }
       if (b.life <= 0) continue;
-      // Cars.
+      // Vehicles.
       for (const car of state.cars) {
         if (!car.dead && dist2(b.x, b.y, car.x, car.y) < (car.len * 0.45) * (car.len * 0.45)) {
           damageCar(car, 12, fx);
@@ -282,13 +294,13 @@ function updateBullets(state, dt, audio) {
         }
       }
     } else {
-      // Enemy bullet: hits the player, or their car.
+      // Enemy bullet: hits the player, or their vehicle.
       const px = p.inCar ? p.inCar.x : p.x;
       const py = p.inCar ? p.inCar.y : p.y;
       if (dist2(b.x, b.y, px, py) < 20 * 20) {
         b.life = 0;
         if (p.inCar) damageCar(p.inCar, 8, fx);
-        else hurtPlayer(p, 9, fx);
+        else hurtPlayer(p, b.damage ?? 9, fx);
         audio && audio.hit();
       }
     }
@@ -303,7 +315,13 @@ function updatePickups(state, audio) {
     if (dist2(pos.x, pos.y, pk.x, pk.y) < 34 * 34) {
       if (pk.kind === 'cash') { state.cash += pk.amount; state.fx.floater(pk.x, pk.y - 20, `+$${pk.amount}`, '#7dff9a'); audio && audio.cash(); }
       else if (pk.kind === 'health') { p.health = clamp(p.health + pk.amount, 0, p.maxHealth); state.fx.floater(pk.x, pk.y - 20, `+${pk.amount} HP`, '#7dff9a'); audio && audio.pickup(); }
-      else { p.ammo = p.maxAmmo; state.fx.floater(pk.x, pk.y - 20, 'AMMO FULL', '#ffd23a'); audio && audio.pickup(); }
+      else if (pk.kind === 'weapon') {
+        const isNew = giveWeapon(p, pk.weapon);
+        state.fx.floater(pk.x, pk.y - 20, isNew ? 'SCATTERGUN!' : 'SCATTERGUN AMMO', '#e8a23a');
+        showToast(state, isNew ? 'Scattergun picked up — press 2 to switch. Five pellets, close range.' : 'Scattergun ammo topped up.', 4);
+        audio && audio.pickup();
+      }
+      else { refillAmmo(p); state.fx.floater(pk.x, pk.y - 20, 'AMMO FULL', '#ffd23a'); audio && audio.pickup(); }
       // Respawn elsewhere later.
       pk.x = -9999; pk.y = -9999;
       setTimeout(() => {
@@ -331,7 +349,9 @@ function updateCarPedHits(state) {
 function respawnPlayer(state) {
   const p = state.player;
   p.alive = true; p.busted = false;
-  p.health = p.maxHealth; p.ammo = p.maxAmmo;
+  p.health = p.maxHealth;
+  p.ammoByWeapon = { pistol: WEAPONS.pistol.ammo, scattergun: p.ownedWeapons.includes('scattergun') ? WEAPONS.scattergun.ammo : 0 };
+  p.ammo = p.ammoByWeapon[p.weapon]; p.maxAmmo = WEAPONS[p.weapon].ammo;
   p.inCar = null;
   p.x = LANDMARKS.hideout.x; p.y = LANDMARKS.hideout.y;
   state.wanted = createWanted();
@@ -371,7 +391,13 @@ function continueGame() {
   state.cash = data.cash; state.rep = data.rep;
   state.doneMissions = data.doneMissions || [];
   state.player.x = data.x; state.player.y = data.y;
-  state.player.health = data.health; state.player.ammo = data.ammo;
+  state.player.health = data.health;
+  state.player.weapon = data.weapon || 'pistol';
+  state.player.ownedWeapons = data.ownedWeapons || ['pistol'];
+  state.player.ammoByWeapon = data.ammoByWeapon || { pistol: 24, scattergun: 0 };
+  state.player.ammo = state.player.ammoByWeapon[state.player.weapon] ?? WEAPONS[state.player.weapon].ammo;
+  state.player.maxAmmo = WEAPONS[state.player.weapon].ammo;
+  state.player.shotRate = WEAPONS[state.player.weapon].rate;
   state.clock = data.clock || 60;
   state.screen = SCREEN.PLAY;
   const next = nextMissionId(state.doneMissions);
@@ -390,6 +416,10 @@ function update(dt) {
   input.mouse.wx = cam.x + (input.mouse.x - renderer.w / 2) / cam.zoom;
   input.mouse.wy = cam.y + (input.mouse.y - renderer.h / 2) / cam.zoom;
 
+  // Weapon switching (keys 1 / 2).
+  if (input.wasPressed('weapon1') && switchWeapon(p, 'pistol')) showToast(state, 'Pistol — press 2 for the scattergun', 1.6);
+  if (input.wasPressed('weapon2') && switchWeapon(p, 'scattergun')) showToast(state, 'Scattergun — five pellets, close range', 1.6);
+
   if (p.inCar) {
     const hitWall = driveCar(p.inCar, input, dt, state.city);
     if (hitWall) audio && audio.crash();
@@ -397,7 +427,7 @@ function update(dt) {
     if (p.inCar.hp <= 0 && !p.inCar.dead) {
       damageCar(p.inCar, 0, state.fx);
       audio.explosion();
-      hurtPlayer(p, 30, state.fx);
+      hurtPlayer(p, p.inCar.bike ? 45 : 30, state.fx);
       p.inCar = null;
       audio.stopEngine();
     }
@@ -405,11 +435,11 @@ function update(dt) {
     p.y = p.inCar ? p.inCar.y : p.y;
   } else {
     updatePlayerOnFoot(p, input, state.city, dt, state.fx);
-    // Shooting (hold to fire, rate-limited).
+    // Shooting (hold to fire, rate-limited by the current weapon).
     state.fireT -= dt;
     if ((input.mouse.down || input.mouse.clicked) && state.fireT <= 0 && p.alive) {
-      const b = playerShoot(p, state.fx, audio);
-      if (b) { state.fx.bullets.push(b); state.fireT = 0.18; }
+      const shots = playerShoot(p, state.fx, audio);
+      if (shots.length > 0) { state.fx.bullets.push(...shots); state.fireT = p.shotRate; }
     }
   }
   if (input.wasPressed('enter')) tryEnterCar(state, audio);
@@ -430,7 +460,7 @@ function update(dt) {
   updateCarPedHits(state);
   updateMission(state, dt, audio);
 
-  // Camera follows the player (or car), zooming out with speed.
+  // Camera follows the player (or vehicle), zooming out with speed.
   const target = playerPos(state);
   const speed01 = p.inCar ? Math.abs(p.inCar.speed) / p.inCar.topSpeed : 0;
   const targetZoom = p.inCar ? lerp(0.72, 0.55, speed01) : 0.85;
@@ -483,14 +513,37 @@ function runSelfTest() {
   const results = [];
   function check(name, ok) { results.push({ name, ok: !!ok }); }
   check('city has buildings', state.city.buildings.length > 30);
+  check('city has containers', state.city.containers.length > 20);
   check('city has parks', state.city.parks.length > 0);
+  check('seven districts', DISTRICTS.length === 7);
   check('traffic spawns', state.cars.length >= 20);
   check('peds spawn', state.peds.length >= 20);
-  check('five missions defined', MISSIONS.length === 5);
+  check('six missions defined', MISSIONS.length === 6);
   check('mission stages exist', MISSIONS.every(m => m.stages.length > 0));
+  check('m6 has a boss stage', MISSIONS.find(m => m.id === 'm6').stages.some(s => s.boss));
   check('player starts alive', state.player.alive && state.player.health === 100);
+  check('player starts with pistol', state.player.weapon === 'pistol' && state.player.ownedWeapons.length === 1);
+  // Bikes: a Harbor Hawk is parked by the Hideout.
+  const bike = state.cars.find(c => c.bike && !c.dead);
+  check('bike spawns', !!bike);
+  // Simulate: enter the bike, drive, check the lean and the speed.
+  state.player.x = bike.x; state.player.y = bike.y;
+  tryEnterCar(state, audio);
+  check('enter bike works', state.player.inCar === bike && bike.bike);
+  // Weapon: grant the scattergun, switch to it, fire a spread.
+  giveWeapon(state.player, 'scattergun');
+  check('scattergun granted', state.player.ownedWeapons.includes('scattergun'));
+  switchWeapon(state.player, 'scattergun');
+  check('switch to scattergun', state.player.weapon === 'scattergun' && state.player.ammo === 12);
+  const shots = playerShoot(state.player, state.fx, audio);
+  check('scattergun fires a spread', shots.length === 5 && shots.every(s => s.damage === 16));
+  switchWeapon(state.player, 'pistol');
+  check('switch back to pistol', state.player.weapon === 'pistol');
   // Simulate: enter a car, drive, steal-check, wanted heat.
-  const car = state.cars.find(c => c.parked && !c.dead);
+  // (Step out of the bike first — E exits a vehicle before it enters one.)
+  tryEnterCar(state, audio);
+  check('exit bike works', state.player.inCar === null);
+  const car = state.cars.find(c => c.parked && !c.dead && !c.bike);
   check('parked car exists', !!car);
   state.player.x = car.x; state.player.y = car.y;
   tryEnterCar(state, audio);
@@ -506,17 +559,30 @@ function runSelfTest() {
   updateMission(state, 0.1, audio); // completes the enterCar stage
   updateMission(state, 0.1, audio); // completes the drive-to-Marina stage
   check('mission m1 completes', state.doneMissions.includes('m1'));
-  // Combat: spawn gang, shoot one.
-  state.gang = spawnGang(LANDMARKS.foundry.x, LANDMARKS.foundry.y, 2, state.rng);
-  const g = state.gang[0];
-  state.fx.bullets.push({ x: g.x, y: g.y, angle: 0, speed: 0, fromPlayer: true, life: 0.5 });
+  // Mission 3 unlock: complete m3, the scattergun pickup appears.
+  startMission(state, 'm3', audio);
+  state.player.inCar = null;
+  state.player.x = LANDMARKS.foundry.x; state.player.y = LANDMARKS.foundry.y;
+  updateMission(state, 0.1, audio); // goto stage
+  state.gang.forEach(g => { g.hp = 0; });
+  updateMission(state, 0.1, audio); // combat stage completes
+  check('mission m3 completes', state.doneMissions.includes('m3'));
+  check('scattergun pickup spawns', state.fx.pickups.some(pk => pk.kind === 'weapon' && pk.weapon === 'scattergun'));
+  // Combat: spawn gang with a boss, shoot the boss. The bullet is
+  // placed on the boss, and the other crew are moved clear so they
+  // cannot absorb the hit.
+  state.gang = spawnGang(LANDMARKS.foundry.x, LANDMARKS.foundry.y, 3, state.rng, { boss: true });
+  const boss = state.gang.find(g => g.boss);
+  check('boss spawns with 150 hp', !!boss && boss.hp === 150);
+  state.gang.filter(g => !g.boss).forEach(g => { g.x += 300; g.y += 300; });
+  state.fx.bullets.push({ x: boss.x, y: boss.y, angle: 0, speed: 0, fromPlayer: true, life: 0.5, damage: 25 });
   updateBullets(state, 0.05, audio);
-  check('bullet damages gang', g.hp < 50);
-  // Save round-trip.
+  check('bullet damages boss', boss.hp === 125);
+  // Save round-trip (weapons included).
   state.cash = 1234;
   check('save works', saveGame(state) === true);
   const loaded = loadGame();
-  check('load works', loaded && loaded.cash === 1234);
+  check('load works', loaded && loaded.cash === 1234 && loaded.ownedWeapons.includes('scattergun'));
   // Render one frame without throwing.
   try { draw(); check('render draws', true); } catch (e) { check('render draws', false); }
   const failed = results.filter(r => !r.ok);

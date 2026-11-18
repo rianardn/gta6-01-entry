@@ -1,9 +1,12 @@
 // NEON HARBOR — the wanted system and the Meridian PD. Stars rise when
-// the player steals a car in front of witnesses, shoots, or rams police.
-// Cops chase on foot and in cruisers, ram the player, and bust them when
-// they get close on foot. Stars fade when the player stays out of sight.
+// the player steals a vehicle in front of witnesses, shoots, or rams
+// police. Cops chase on foot and in cruisers, ram the player, and bust
+// them when they get close on foot. At four stars and up, the PD sends
+// out its motorcycle interceptors — faster than any cruiser, and they
+// cut corners the cars cannot. Stars fade when the player stays out
+// of sight.
 
-import { CAR_MODELS, clamp, angleLerp, dist2, randRange } from './config.js';
+import { CAR_MODELS, clamp, lerp, angleLerp, dist2, randRange } from './config.js';
 import { makeCar, randomRoute } from './traffic.js';
 import { randomRoadPoint } from './city.js';
 
@@ -11,7 +14,7 @@ export function createWanted() {
   return {
     stars: 0, heat: 0, // heat 0..100 feeds the star level
     seenT: 0, hiddenT: 0, bustT: 0,
-    cops: [], // {x,y,angle,speed,onFoot,hp}
+    cops: [], // {x,y,angle,speed,onFoot,hp,car?}
     spawnT: 0, sirenOn: false,
   };
 }
@@ -29,13 +32,16 @@ export function wantedFor(stars) {
 }
 
 function spawnCop(w, player, rng, inCar) {
-  const p = randomRoadPoint(rng);
   // Spawn a little way off, on a road near the player.
   const ang = randRange(rng, 0, Math.PI * 2);
   const x = clamp(player.x + Math.cos(ang) * randRange(rng, 500, 800), 100, 3300);
   const y = clamp(player.y + Math.sin(ang) * randRange(rng, 500, 800), 100, 3300);
   if (inCar) {
-    const car = makeCar(6, x, y, 0, { police: true, driver: 'cop' });
+    // At four stars the PD rolls out a motorcycle interceptor instead
+    // of a cruiser: same chase brain, a faster, narrower ride.
+    const onBike = w.stars >= 4 && rng() < 0.5;
+    const car = makeCar(onBike ? 8 : 6, x, y, 0, { police: true, driver: 'cop' });
+    if (onBike) { car.color = '#22304a'; car.topSpeed = 330; }
     car.route = randomRoute(rng, x, y);
     w.cops.push({ x, y, angle: 0, speed: 0, onFoot: false, hp: 60, car });
     return car;
@@ -105,13 +111,15 @@ export function updateWanted(w, player, cars, dt, rng, fx, audio) {
       const dx = px - car.x, dy = py - car.y;
       const d = Math.hypot(dx, dy) || 1;
       const want = Math.atan2(dy, dx);
-      car.angle = angleLerp(car.angle, want, clamp(dt * 2.6, 0, 1));
-      const cruise = d > 700 ? 330 : 300;
+      // Bike interceptors turn sharper than cruisers.
+      const turnRate = car.bike ? 3.4 : 2.6;
+      car.angle = angleLerp(car.angle, want, clamp(dt * turnRate, 0, 1));
+      const cruise = car.bike ? (d > 700 ? 350 : 330) : (d > 700 ? 330 : 300);
       car.speed = lerp(car.speed, cruise, clamp(dt * 1.2, 0, 1));
       car.x += Math.cos(car.angle) * car.speed * dt;
       car.y += Math.sin(car.angle) * car.speed * dt;
       c.x = car.x; c.y = car.y; c.angle = car.angle; c.speed = car.speed;
-      // Ram the player's car.
+      // Ram the player's vehicle.
       if (player.inCar && d < (car.len + player.inCar.len) * 0.42) {
         player.inCar.hp -= 14 * dt * 10 * 0.1;
         player.inCar.speed *= 0.94;
@@ -123,5 +131,3 @@ export function updateWanted(w, player, cars, dt, rng, fx, audio) {
   w.cops = w.cops.filter(c => c.hp > 0 && !(c.car && c.car.dead && c.onFoot === false && w.stars === 0));
   return w;
 }
-
-function lerp(a, b, t) { return a + (b - a) * t; }

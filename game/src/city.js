@@ -1,6 +1,7 @@
 // NEON HARBOR — the city of Port Meridian: streets, blocks, buildings,
-// parks, the beach and the harbour. Everything is generated from a seed
-// so the map is identical every run; collision helpers live here too.
+// parks, the beach, the harbour, and the Dockside container yards.
+// Everything is generated from a seed so the map is identical every
+// run; collision helpers live here too.
 
 import { WORLD_W, WORLD_H, BLOCK, ROAD_W, DISTRICTS, mulberry32, pick, randRange } from './config.js';
 
@@ -28,11 +29,19 @@ export function nearestRoadPoint(x, y) {
   return { x: bx, y: by };
 }
 
+// True inside the Dockside container yards (east side, y 1400-2400).
+export function inDockside(x, y) {
+  return x >= 2300 && x < 3400 && y >= 1400 && y < 2400;
+}
+
+const CONTAINER_COLORS = ['#b84a2a', '#2a6ab8', '#3a8a4a', '#c9a13a', '#7a3a6e', '#4a7a8a'];
+
 export function buildCity(seed) {
   const rng = mulberry32(seed);
   const buildings = [];
   const trees = [];
   const parks = [];
+  const containers = [];
   const { xs, ys } = streetCenters();
   const palette = ['#3a4a6b', '#6b4a3a', '#4a6b5a', '#5e4a6b', '#6b5a3a', '#41586b', '#54423a'];
 
@@ -49,6 +58,24 @@ export function buildCity(seed) {
       if (by0 > 2700) {
         for (let t = 0; t < 3; t++) {
           trees.push({ x: cx + randRange(rng, -90, 90), y: cy + randRange(rng, -60, 60), palm: true, r: 10 });
+        }
+        continue;
+      }
+      // Dockside blocks are container yards, not towers.
+      if (inDockside(cx, cy)) {
+        const rows = 2 + Math.floor(rng() * 2);
+        for (let r = 0; r < rows; r++) {
+          const n = 2 + Math.floor(rng() * 3);
+          for (let k = 0; k < n; k++) {
+            const horizontal = rng() < 0.6;
+            const cw = horizontal ? 64 : 26, ch = horizontal ? 26 : 64;
+            containers.push({
+              x: bx0 + 20 + k * 78 + randRange(rng, -6, 6),
+              y: by0 + 26 + r * 88 + randRange(rng, -6, 6),
+              w: cw, h: ch, color: pick(rng, CONTAINER_COLORS),
+              stacked: rng() < 0.25,
+            });
+          }
         }
         continue;
       }
@@ -73,13 +100,16 @@ export function buildCity(seed) {
   }
   // Harbour pier on the east edge.
   const pier = { x: WORLD_W - 60, y: 1500, w: 120, h: 700 };
-  return { buildings, trees, parks, pier, seed };
+  return { buildings, trees, parks, containers, pier, seed };
 }
 
 // Circle vs building-rect collision. Returns the push-out for a circle.
+// Containers are solid too — a bike or a car cannot drive through a
+// stacked yard.
 export function collideBuildings(city, x, y, r) {
   let px = x, py = y;
-  for (const b of city.buildings) {
+  const solids = city.containers ? [...city.buildings, ...city.containers] : city.buildings;
+  for (const b of solids) {
     const nx = Math.max(b.x, Math.min(px, b.x + b.w));
     const ny = Math.max(b.y, Math.min(py, b.y + b.h));
     const dx = px - nx, dy = py - ny;
@@ -99,6 +129,11 @@ export function collideBuildings(city, x, y, r) {
 export function pointInBuilding(city, x, y) {
   for (const b of city.buildings) {
     if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return true;
+  }
+  if (city.containers) {
+    for (const c of city.containers) {
+      if (x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h) return true;
+    }
   }
   return false;
 }
@@ -130,4 +165,5 @@ export const LANDMARKS = {
   pier: { x: 3230, y: 1700, label: 'East Pier' },
   beach: { x: 1700, y: 3060, label: 'Sandside Beach' },
   bank: { x: 1360, y: 510, label: 'Meridian Vault' },
+  dockside: { x: 2900, y: 1900, label: 'Dockside Warehouses' },
 };
